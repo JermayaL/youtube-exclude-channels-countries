@@ -1,0 +1,119 @@
+youtube_country_check.txt
+function main() {
+	//Enter a list of countries where channels should not be excluded
+ 	const countries = ["Netherlands, Belgium"]
+	//What to do with channel where country is not specified. Right now it just ignores
+	const empty_exclude = false;
+	//Name of Placement Exclusion List
+	const exclude_list = "List_name";
+	// How many days are used for analysis
+	const count_days = 60  
+	//The sheet on which all the information is gathered. Copy it and paste in the new link
+	const sheet_url="https://docs.google.com/spreadsheets/d/1y6Q0ZNtuyEGr0XIDa4DL-cU3OTy1Eg6jnWT_m9sBD8c/copy"
+  
+  const sh=SpreadsheetApp.openByUrl(sheet_url)
+  const ss=sh.getSheetByName("Report Tab")
+
+  const arrSh=ss.getDataRange().getValues();
+  
+  const added=arrSh.map(item=>item[1]);
+  //Logger.log(added)
+  let send_check=false
+  let columns = [
+        'Action',  'Placement Exclusion List Name','Placement url'];
+  let upload = AdsApp.bulkUploads().newCsvUpload(
+        columns, {moneyInMicros: false});
+  const end=new Date(Date.now() - 86400000)    
+  const start=new Date(Date.now() - count_days*86400000)  
+  
+  let channels=[]
+
+  var bulkUploads= new Map();
+  
+    searchResults = AdsApp.search( `SELECT detail_placement_view.target_url,  detail_placement_view.display_name, detail_placement_view.group_placement_target_url,  detail_placement_view.placement, detail_placement_view.placement_type
+    FROM detail_placement_view WHERE segments.date>='${date_format(start)}' AND segments.date <='${date_format(end)}' `)
+  // ORDER BY segments.day_of_week ASC`
+  for (const row of searchResults) {
+    if(row.detailPlacementView.placementType!="YOUTUBE_VIDEO"||row.detailPlacementView.groupPlacementTargetUrl==null) continue;
+    if(added.indexOf(row.detailPlacementView.groupPlacementTargetUrl)>-1) continue
+    //Logger.log(row.detailPlacementView.groupPlacementTargetUrl)
+    channels.push(row.detailPlacementView.groupPlacementTargetUrl)
+    
+ }
+      
+  channels=[... new Set(channels)]
+  Logger.log(`Find ${channels.length} channels`)
+  
+  Logger.log(`Processing channels`)
+  
+  for (const channel of channels){
+  const source = UrlFetchApp.fetch(channel+"/about").getContentText()
+  /*let tags = source.match(/(?<=keywords\\x22:\\x22).*?(?=\\x22,\\x22ownerUrls)/gi);
+  let tag=tags[0].replaceAll("x22","")
+  tag=tag.replace(/\\/g,'')*/
+  const title_tmp = source.match(/(?<=<title>)[^<]*(?=<\/title>)/gi);
+  const title=title_tmp[1].replace(" - YouTube","")
+  let country_match = source.match(/(?<=country\\x22:\\x7b\\x22runs\\x22:\\x5b\\x7b\\x22text\\x22:\\x22).*?(?=\\x22\\x7d\\x5d\\x7d)/gi);
+  const country=country_match!=null?country_match[0]:""
+  if(countries.indexOf(country)==-1||(empty_exclude&&country=="")) {
+  send_check=true  
+  upload.append({
+        'Action': "Add",
+        'Placement Exclusion List Name': exclude_list,
+        'Placement url': channel
+    })  
+  Logger.log(`Will exclude ${title}`)  
+  ss.appendRow([title,channel,country,"Excluded"])    
+    continue}
+  
+  ss.appendRow([title,channel,country])
+  }
+
+  /*arrSh_check=ss.getDataRange().getValues();
+  for (let i=1;i<arrSh.length;i++){
+  if(arrSh[i][3]=="Excluded") continue
+  if(countries.indexOf(arrSh[i][2])>-1) continue
+  if(!empty_exclude&&arrSh[i][2]=="") continue
+  Logger.log(`Will exclude ${arrSh[i][0]}`)
+  send_check=true  
+      upload.append({
+        'Action': "Add",
+        'Placement Exclusion List Name': exclude_list,
+        'Placement url': arrSh[i][1]
+    })
+  ss.getRange(i+1,4,1,1).setValue("Excluded") 
+  }*/
+  if (send_check) upload.apply()
+  
+}
+
+
+
+function date_format(date){
+return Utilities.formatDate(date, AdsApp.currentAccount().getTimeZone(), 'yyyy-MM-dd')
+}
+
+function checktag(bulkUploads,tag,channel,arrSh_check){
+  for (let check of arrSh_check)
+  {
+  const tag_check=check[0]
+  const library=check[1]
+  const label=check[2]
+  if(tag.indexOf(tag_check)==-1) continue
+  //Logger.log(bulkUploads[tag_check])
+  if(bulkUploads.has(tag_check)) {
+    let tmp=bulkUploads.get(tag_check)
+    tmp.channels.push(channel)
+    bulkUploads.set(tag_check,tmp)
+  }
+  else bulkUploads.set(tag_check,{library: library, label: label, channels:[channel]})
+  }  
+  //Logger.log(bulkUploads.length)  
+}
+function label_check(name){
+var accountLabelSelector = AdsManagerApp.accountLabels()
+    .withCondition(`Name='${name}'`);
+
+var  accountLabelIterator = accountLabelSelector.get();
+return accountLabelIterator.totalNumEntities()
+}
